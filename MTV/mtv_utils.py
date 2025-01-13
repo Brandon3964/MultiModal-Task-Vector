@@ -35,7 +35,35 @@ def load_model(model_name, cur_dataset):
     Returns: 
     model_helper: A helper class that contains the model as well as other functionality.
     """
+    if model_name == "llava_ov":
+        from llava.model.builder import load_pretrained_model
+        
+        pretrained = "lmms-lab/llava-onevision-qwen2-7b-ov"
 
+        
+        model_name = "llava_qwen"
+        device_map = "auto"
+        llava_model_args = {
+                "multimodal": True,
+                # "image_aspect_ratio":"pad"
+            }
+        ###For finetuned models
+
+        # overwrite_config = {'tie_word_embeddings': False, 'use_cache': True, "vocab_size": 152064}
+        # overwrite_config = {}
+        # overwrite_config["image_aspect_ratio"] = "pad"
+        # llava_model_args["overwrite_config"] = overwrite_config
+
+
+        tokenizer, model, image_processor, max_length = load_pretrained_model(pretrained, None, model_name, device_map=device_map, **llava_model_args)
+        #tokenizer, model, image_processor, max_length = load_pretrained_model("/home/zhaobin/LLaVA-NeXT/checkpoints/Mhalu_sft", pretrained, "llava_qwen_lora", device_map=device_map, **llava_model_args)
+
+        # ###TODO:DELETE, FOR BLINK
+        # tokenizer, model, image_processor, max_length = load_pretrained_model(lora_path, pretrained, "llava_qwen_lora", device_map=device_map, **llava_model_args)
+
+        model.eval()
+        model.requires_grad_(False)
+        model_helper = llavaOVHelper(model, tokenizer, image_processor, cur_dataset)
     if model_name == "Qwen-VL":
         
         model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-VL", device_map="auto", trust_remote_code=True, fp16=True).eval()
