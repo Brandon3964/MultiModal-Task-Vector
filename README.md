@@ -28,6 +28,7 @@ For Vizwiz and OKVQA, please follow the instruction in the Qwen-VL repository. F
 ```bash
 git+https://github.com/davidbau/baukit@main#egg=baukit
 ```
+3. Install `flash-attention`
 Please refer to models.py if you would like to use custom models.
 
 ### 📝 Citation

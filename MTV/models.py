@@ -4,9 +4,10 @@ from PIL import Image
 import torch
 import copy
 
-# from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
-# from llava.conversation import conv_templates, SeparatorStyle
-# from llava.mm_utils import process_images, tokenizer_image_token
+from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
+from llava.conversation import conv_templates, SeparatorStyle
+from llava.mm_utils import process_images, tokenizer_image_token
+from qwen_vl_utils import process_vision_info
 
 def load_image(image_file):
     try:
@@ -64,7 +65,7 @@ class ModelHelper:
         pass
 
 
-class llavaOAHelper(ModelHelper):
+class llavaOVHelper(ModelHelper):
 
     def __init__(self, model, tokenizer, processor, cur_dataset):
         self.model = model
@@ -104,7 +105,8 @@ class llavaOAHelper(ModelHelper):
         image_sizes = [image.size for image in image_list]
 
         image_tensors = process_images(image_list, self.processor, self.model.config)
-        image_tensors = [_image.to(dtype=torch.float16, device="cuda") for _image in image_tensors]
+        image_tensors = [_image.to(dtype=torch.float16, device=self.model.device) for _image in image_tensors]
+
 
         return (input_ids, image_tensors, image_sizes)
     
@@ -324,7 +326,88 @@ class Idefics2Helper(ModelHelper):
         output = self.processor.batch_decode(output[:, model_input["input_ids"].size(1):],
                             skip_special_tokens=True)[0].strip()
         return output
+    
+    
+class Qwen2Helper(ModelHelper):
+    def __init__(self, model, processor, cur_dataset):
+        self.model = model
+        self.processor = processor
+        self.tokenizer = processor.tokenizer
+        self.model_config = {"n_heads":model.model.config.num_attention_heads,
+                    "n_layers":model.model.config.num_hidden_layers,
+                    "resid_dim":model.model.config.hidden_size,
+                    "name_or_path":model.model.config._name_or_path,
+                    "attn_hook_names":[f'model.layers.{layer}.self_attn.o_proj' for layer in range(model.model.config.num_hidden_layers)],
+                    "layer_hook_names":[f'model.layers.{layer}' for layer in range(model.model.config.num_hidden_layers)],
+                    "mlp_hook_names": [f'model.layers.{layer}.mlp.down_proj' for layer in range(model.model.config.num_hidden_layers)]}
+        self.format_func = get_format_func(cur_dataset)
+        self.cur_dataset = cur_dataset
+        self.nonspecial_idx = 0
+        self.split_idx = 2
+        self.question_lookup = None
 
+        self.space = False
+
+        self.all_heads = []
+        for layer in range(28):
+            for head in range(28):
+                self.all_heads.append((layer, head, -1))
+
+    def insert_image(self, text, image_list):
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": img} for img in image_list
+                ] + [
+                    {"type": "text", "text": text}
+                ]
+            }
+        ]
+
+
+        formatted_text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+
+        inputs = self.processor(
+            text=[formatted_text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to("cuda")
+
+        
+        return inputs
+
+    def forward(self, model_input, labels=None):
+
+        # input_ids = model_input["input_ids"].to(self.model.device)
+        # attention_mask = model_input["attention_mask"].to(self.model.device)
+
+        result = self.model(
+            **model_input
+        )  
+
+        return result
+
+    def generate(self, model_input, max_new_tokens):
+
+    
+        generated_output = self.model.generate(
+            **model_input, max_new_tokens=max_new_tokens, do_sample=False
+        )
+
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(model_input.input_ids, generated_output)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        return output_text[0]
 
 
 

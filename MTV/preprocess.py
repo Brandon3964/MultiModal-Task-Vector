@@ -9,12 +9,12 @@ If the question can not be answered, respond unanswerable. """
 
 def open_data(dataset_name, path):
 
-    jsonl_format_dataset = ["vizwiz", "okvqa"]
+    jsonl_format_dataset = ["vizwiz", "okvqa", "natural_ret"]
     list_format_dataset = ["flower", "cub", "dtd"]
 
     with open(path, 'r') as json_file:
         if dataset_name in jsonl_format_dataset:
-            dataset = list(json_file)
+            dataset = [json.loads(json_string) for json_string in list(json_file)]
         elif dataset_name in list_format_dataset:
             dataset = json.load(json_file)
     return dataset
@@ -42,7 +42,7 @@ def natural_ret_balance(all_data):
 
     sampled = random.sample(all_data, 20)  # Sample more than needed to ensure we find enough of each
     for item in sampled:
-        item = json.loads(item.strip())
+        # item = json.loads(item.strip())
         if item['label'] == 'Yes' and len(yes_samples) != 2:
             yes_samples.append(item)
         elif item['label'] == 'No' and len(no_samples) != 2:
@@ -56,6 +56,34 @@ def natural_ret_balance(all_data):
 
 def format_natural_ret(all_data, cur_item=None, num_shot=0, model_helper=None, split="train"):
     prompt = '<image>\n{} Answer with Yes or No.'
+    image_list = []
+    
+    if cur_item is None:
+        data = random.sample(all_data, 1)[0]
+    else:
+        data = cur_item
+    image = data['image']
+    question = data['question']
+    label = data['label']
+    question_id = data['question_id']
+    
+    few_shot_prompt = ''
+    if num_shot > 0:
+        sampled_data = natural_ret_balance(all_data)
+        for sample in sampled_data:
+            few_shot_prompt += prompt.format(sample['question']) + f" {sample['label']}\n"
+            image_list.append(sample["image"])
+    
+    full_text = few_shot_prompt + prompt.format(question)
+    
+    image_list.append(image)
+    
+    return full_text, image_list, label, question_id
+    
+
+
+def format_nuimages(all_data, cur_item=None, num_shot=0, model_helper=None, split="train"):
+    prompt = '<image>\n{}' # Experiment with different prompt structures here.
     image_list = []
     
     if cur_item is None:

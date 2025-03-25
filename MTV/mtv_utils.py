@@ -2,7 +2,7 @@
 from baukit import TraceDict, get_module
 from models import *
 from preprocess import *
-import sys
+import os
 import torch
 import numpy as np
 import json
@@ -18,7 +18,7 @@ import warnings
 
 torch.autograd.set_detect_anomaly(True)
 
-sys.path.append('../eval_mm')
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'eval_mm'))
 from vqa import VQA
 from vqa_eval import VQAEval
 
@@ -98,6 +98,18 @@ def load_model(model_name, cur_dataset):
         )
 
         model_helper = Idefics2Helper(model, processor, cur_dataset)
+
+    if model_name == "qwen2.5-vl":
+        from transformers import Qwen2_5_VLForConditionalGeneration
+
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained( "Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype=torch.bfloat16, device_map="auto", attn_implementation="flash_attention_2")
+
+        model.eval()
+        model.requires_grad_(False)
+        
+        processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
+
+        model_helper = Qwen2Helper(model, processor, cur_dataset)
 
     return model_helper
 
@@ -203,7 +215,7 @@ def reinforce(mean_activations, model_helper, reinforce_data, eval_data):
     num_heads = model_helper.model_config["n_heads"]
     lr = 0.1
     eps = 1e-3
-    epoch = 600
+    epoch = 1
 
     #(num_layer, num_head)
     bernoullis = [torch.neg(torch.ones(num_heads)).requires_grad_() for _ in range(num_layer)]
@@ -224,6 +236,7 @@ def reinforce(mean_activations, model_helper, reinforce_data, eval_data):
             if model_helper.space:
                 target_out = " " + target_out
 
+            print(target_out)
             target_token = model_helper.tokenizer(target_out, return_tensors='pt')["input_ids"][0][model_helper.nonspecial_idx].unsqueeze(dim=0).to("cuda")
             sigmoid_tensor = torch.stack([torch.sigmoid(bernoulli).clamp(min=eps, max=1-eps) for bernoulli in bernoullis])
             prob_dist = torch.distributions.Bernoulli(sigmoid_tensor)

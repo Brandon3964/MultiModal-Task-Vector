@@ -19,7 +19,6 @@ def eval_reinforce(args):
     reinforce_data = random.sample(train_dataset, 100)
     eval_data = val_dataset[:50]
 
-
     ##Load the model
     model_helper = load_model(args.model_name, args.data_name)
 
@@ -56,7 +55,6 @@ def eval_reinforce(args):
         intervention_locations = best_heads[1]
 
         intervention_locations = torch.load(args.bernoullis_path)
-        print(len(intervention_locations))
     else:
         mean_activations = None
         intervention_locations = None
@@ -71,7 +69,7 @@ def eval_reinforce(args):
         new_input = model_helper.insert_image(text, image_list)
         clean_out, interv_out = fv_intervention_natural_text(new_input, model_helper, max_new_tokens=args.max_token, return_item=args.cur_mode, intervention_locations=intervention_locations, avg_activations=mean_activations)
 
-
+        # print(f'Clean Out {clean_out} Interv Out {interv_out}')
         if args.model_name == "Qwen-VL":
             interv_answers.append({"answer":interv_out, "question_id":question_id})
             clean_answers.append({"answer":clean_out, "question_id":question_id})

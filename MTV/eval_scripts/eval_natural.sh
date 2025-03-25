@@ -1,14 +1,14 @@
-python3 -m mtv_eval \
-    --model_name llava_ov \
+python3 ../mtv_eval.py \
+    --model_name qwen2.5-vl \
     --data_name natural_ret \
-    --train_path ./data/vizwiz/natural_ret_train.jsonl \
-    --val_path ./data/vizwiz/natural_ret_val.jsonl \
-    --num_example 100 \
-    --num_shot 16 \
+    --train_path ../data/naturalbench_ret_train.jsonl \
+    --val_path ../data/naturalbench_ret_test.jsonl \
+    --num_example 1 \
+    --num_shot 1 \
     --max_token 20 \
     --eval_num_shot 0 \
-    --bernoullis_path ./storage/natural_ret_mtv.pt \
-    --activation_path ./storage/natural_ret_mtv_activation.pt \
+    --bernoullis_path ../storage/natural_ret_mtv.pt \
+    --activation_path ../storage/natural_ret_mtv_activation.pt \
     --is_eval True \
     --result_folder ./ \
     --cur_mode both \
