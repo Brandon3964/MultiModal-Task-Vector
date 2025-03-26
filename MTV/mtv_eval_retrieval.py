@@ -25,16 +25,16 @@ def eval_reinforce(args):
     ##Mean activation of some in-context input
     if args.cur_mode != "clean":
 
-        # mean_activations = get_last_mean_head_activations(activation_data, model_helper, N_TRIALS = args.num_example, shot=args.num_shot)
+        mean_activations = get_last_mean_head_activations(activation_data, model_helper, N_TRIALS = args.num_example, shot=args.num_shot)
 
-        # torch.save(mean_activations, args.activation_path)
+        torch.save(mean_activations, args.activation_path)
         mean_activations = torch.load(args.activation_path)
 
         # ##Examples from the test set is used to visualize the validation loss
         bernoullis = reinforce(mean_activations, model_helper, reinforce_data, eval_data)
         # torch.save(bernoullis, args.bernoullis_path)
         # bernoullis = torch.load(args.bernoullis_path)
-        print(bernoullis)
+
         best_heads = (999, None)
         ###Sample multiple times and pick the best set of heads.
         for _ in range(10):
@@ -61,32 +61,20 @@ def eval_reinforce(args):
 
     clean_answers = []
     interv_answers = []
-    clean_count, interv_count = 0, 0
 
     # Create lists to store the test data for later group processing
     clean_test_data = []
     interv_test_data = []
 
-    for item in tqdm(val_dataset[:12]):
+    for item in tqdm(val_dataset):
         text, image_list, target_out, question_id = model_helper.format_func(train_dataset, item, num_shot=args.eval_num_shot)
         new_input = model_helper.insert_image(text, image_list)
         clean_out, interv_out = fv_intervention_natural_text(new_input, model_helper, max_new_tokens=args.max_token, return_item=args.cur_mode, intervention_locations=intervention_locations, avg_activations=mean_activations)
-
-        # Process outputs based on model
-        if args.model_name == "Qwen-VL":
-            clean_answer = clean_out
-            interv_answer = interv_out
-        else:
-            clean_answer = clean_out.split(".")[0].split("\n")[0].strip()
-            interv_answer = interv_out.split(".")[0].split("\n")[0].strip()
         
-        # Add to answer lists (original format)
-        interv_answers.append({"answer": interv_answer, "question_id": question_id})
-        clean_answers.append({"answer": clean_answer, "question_id": question_id})
+        # Add to score lists
+        interv_answers.append({"score": interv_out, "question_id": question_id}) # Can change this to have an index for query and context
+        clean_answers.append({"score": clean_out, "question_id": question_id})
         
-        # Count correct answers (original metric)
-        clean_count += int(clean_answer.lower() == target_out.lower())
-        interv_count += int(interv_answer.lower() == target_out.lower())
         
         # Create entries for NaturalBench-style group processing
         clean_test_data.append({
@@ -94,7 +82,7 @@ def eval_reinforce(args):
             "question": text,
             "question_id": question_id,
             "label": target_out,
-            "pred": clean_answer
+            "pred": "Yes" if clean_out >= .5 else "No"
         })
         
         interv_test_data.append({
@@ -102,92 +90,87 @@ def eval_reinforce(args):
             "question": text,
             "question_id": question_id,
             "label": target_out,
-            "pred": interv_answer
+            "pred": "Yes" if interv_out >= .5 else "No"
         })
 
     if args.is_eval:
         # Process and evaluate based on mode
         if args.cur_mode == "interv" or args.cur_mode == "both":
-            if args.data_name == "flower" or args.data_name == "cub" or args.data_name == "dtd":
-                print(f"Intervention Score: {interv_count/len(val_dataset)}")
-            # NaturalBench evaluation for intervened answers
-            elif args.data_name == "natural_ret":
+            if args.data_name == "natural_ret":
                 print(f"\nNaturalBench Detailed Metrics for Intervention:")
                 evaluate_naturalbench(interv_test_data)
-            else:
-                print(f"{args.data_name}_{args.experiment_name} Intervention Score:")
-                eval_vqa(f"{args.data_name}_val", args.result_folder + f"{args.experiment_name}_interv.json", interv_answers)
-                
-                
+            # elif args.data_name == "wino"
 
         if args.cur_mode == "clean" or args.cur_mode == "both":
-            if args.data_name == "flower" or args.data_name == "cub" or args.data_name == "dtd":
-                print(f"Clean Score: {clean_count/len(val_dataset)}")
             # NaturalBench evaluation for clean answers
-            elif args.data_name == "natural_ret":
+            if args.data_name == "natural_ret":
                 print(f"\nNaturalBench Detailed Metrics for Clean:")
                 evaluate_naturalbench(clean_test_data)
-            else:
-                print(f"{args.data_name}_{args.experiment_name} Clean Score:")
-                eval_vqa(f"{args.data_name}_val", args.result_folder + f"{args.experiment_name}_clean.json", clean_answers)
+            # elif args.data_name
+    with open('./storage/' + args.data_name + '_clean_scores.jsonl', 'w') as writefile:
+        for line in clean_answers:
+            writefile.write(json.dumps(line) + '\n')
+    with open('./storage/' + args.data_name + '_interv_scores.jsonl', 'w') as writefile:
+        for line in interv_answers:
+            writefile.write(json.dumps(line) + '\n')
+
+    def evaluate_naturalbench(test_data):
+        """
+        Evaluate NaturalBench dataset using the group-based metrics.
+        """
+        q_correct = 0  # Question accuracy count
+        i_correct = 0  # Image accuracy count  
+        g_correct = 0  # Group accuracy count
+        correct = 0  # Raw accuracy count
+        total_groups = len(test_data) // 4  # Total number of groups
+        
+        # Process data in groups of 4
+        for i in range(0, len(test_data), 4):
+            group = test_data[i:i+4]
+            group_preds = []
+            
+            # Get predictions for the group
+            for item in group:
+                pred = item["pred"]
+                label = item["label"]
+                group_preds.append(pred.lower() == label.lower())
+            
+            # Question accuracy (first two and second two must match)
+            if group_preds[0] and group_preds[1]:
+                q_correct += 1
+            if group_preds[2] and group_preds[3]:
+                q_correct += 1
                 
-def evaluate_naturalbench(test_data):
-    """
-    Evaluate NaturalBench dataset using the group-based metrics.
-    """
-    q_correct = 0  # Question accuracy count
-    i_correct = 0  # Image accuracy count  
-    g_correct = 0  # Group accuracy count
-    correct = 0  # Raw accuracy count
-    total_groups = len(test_data) // 4  # Total number of groups
-    
-    # Process data in groups of 4
-    for i in range(0, len(test_data), 4):
-        group = test_data[i:i+4]
-        group_preds = []
-        
-        # Get predictions for the group
-        for item in group:
-            pred = item["pred"]
-            label = item["label"]
-            group_preds.append(pred.lower() == label.lower())
-        
-        # Question accuracy (first two and second two must match)
-        if group_preds[0] and group_preds[1]:
-            q_correct += 1
-        if group_preds[2] and group_preds[3]:
-            q_correct += 1
-            
-        # Image accuracy (first and third, second and fourth must match)
-        if group_preds[0] and group_preds[2]:
-            i_correct += 1
-        if group_preds[1] and group_preds[3]:
-            i_correct += 1
-            
-        # Group accuracy (all four must be correct)
-        if all(group_preds):
-            g_correct += 1
+            # Image accuracy (first and third, second and fourth must match)
+            if group_preds[0] and group_preds[2]:
+                i_correct += 1
+            if group_preds[1] and group_preds[3]:
+                i_correct += 1
+                
+            # Group accuracy (all four must be correct)
+            if all(group_preds):
+                g_correct += 1
 
-        # Raw accuracy
-        correct += sum(group_preds)
+            # Raw accuracy
+            correct += sum(group_preds)
 
-    # Calculate percentages
-    q_acc = q_correct / (total_groups * 2)  # Two questions per group
-    i_acc = i_correct / (total_groups * 2)  # Two images per group
-    g_acc = g_correct / total_groups        # One group accuracy score per group
-    acc = correct / (total_groups * 4)      # Accuracy calculated per sample
-    
-    print(f"Question accuracy: {q_acc:.4f}")
-    print(f"Image accuracy: {i_acc:.4f}")
-    print(f"Group accuracy: {g_acc:.4f}")
-    print(f"Raw accuracy: {acc:.4f}")
-    
-    return {
-        "question_accuracy": q_acc,
-        "image_accuracy": i_acc,
-        "group_accuracy": g_acc,
-        "raw_accuracy": acc
-    }
+        # Calculate percentages
+        q_acc = q_correct / (total_groups * 2)  # Two questions per group
+        i_acc = i_correct / (total_groups * 2)  # Two images per group
+        g_acc = g_correct / total_groups        # One group accuracy score per group
+        acc = correct / (total_groups * 4)      # Accuracy calculated per sample
+        
+        print(f"Question accuracy: {q_acc:.4f}")
+        print(f"Image accuracy: {i_acc:.4f}")
+        print(f"Group accuracy: {g_acc:.4f}")
+        print(f"Raw accuracy: {acc:.4f}")
+        
+        return {
+            "question_accuracy": q_acc,
+            "image_accuracy": i_acc,
+            "group_accuracy": g_acc,
+            "raw_accuracy": acc
+        }
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="Qwen")

@@ -521,6 +521,31 @@ def fv_intervention_natural_text(model_input, model_helper, max_new_tokens=10, r
 
     return clean_output, intervention_output
 
+def fv_intervention_vqascore(model_input, model_helper, return_item="both", intervention_locations=None, avg_activations=None):
+
+    """
+    This function is a wrapper of generation intervention
+    """
+
+    #Text form to avoid for-loop inside eval loop
+    clean_output, intervention_output = "None", "None"
+
+    if return_item == "clean" or return_item == "both":
+    
+        clean_output = model_helper.vqascore(model_input)
+
+
+    if return_item == "interv" or return_item == "both":
+        
+        intervention_fn = last_replace_activation_w_avg(layer_head_token_pairs=intervention_locations, avg_activations=avg_activations, 
+                                                    model=model_helper.model, model_config=model_helper.model_config,
+                                                    batched_input=False, last_token_only=True, split_idx=model_helper.split_idx)
+            
+        with TraceDict(model_helper.model, layers=model_helper.model_config['attn_hook_names'], edit_output=intervention_fn):     
+                intervention_output = model_helper.vqascore(model_input)
+
+    return clean_output, intervention_output
+
 
 def eval_vqa(cur_dataset, results_path, answers):
     ds_collections = {

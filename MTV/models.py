@@ -83,6 +83,7 @@ class llavaOVHelper(ModelHelper):
         self.cur_dataset = cur_dataset
         self.split_idx = 2
         self.nonspecial_idx = 0
+        self.modalities = None
 
 
     def insert_image(self, text, image_list, gt=None):
@@ -100,7 +101,12 @@ class llavaOVHelper(ModelHelper):
 
         if image_list == []:
             return (input_ids, None, None)
+        
+        path = image_list[0]
 
+        if path.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')): 
+            self.modalities = ["video"]
+        
         image_list = load_images(image_list)
         image_sizes = [image.size for image in image_list]
 
@@ -128,11 +134,29 @@ class llavaOVHelper(ModelHelper):
             image_sizes=model_input[2],
             do_sample=False,
             temperature=0,
-
             max_new_tokens=max_new_tokens,
         )
         
         return self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0]
+    def vqascore(self, model_input, answer='Yes'):
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                model_input[0],
+                images=model_input[1],
+                image_sizes=model_input[2],
+                do_sample=False,
+                temperature=0,
+                max_new_tokens=1,
+                modalities=self.modalities,
+                output_scores=True,
+                return_dict_in_generate=True
+            )
+        scores = outputs.scores[0]
+        probs = torch.nn.functional.softmax(scores, dim=-1)
+        yes_token_id = self.processor.tokenizer.encode(answer)[0]
+        lm_prob = probs[0, yes_token_id].item()
+        
+        return lm_prob
 
 
 class QwenHelper(ModelHelper):
@@ -312,21 +336,21 @@ class Idefics2Helper(ModelHelper):
 
     def generate(self, model_input, max_new_tokens):
 
-        output = self.model.generate(
-                **model_input,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                num_beams=1,
-                min_new_tokens=1,
-                length_penalty=1,
-                num_return_sequences=1,
-                output_hidden_states=True,
-                use_cache=True,)
+        with torch.inference_mode():
+            output = self.model.generate(
+                    **model_input,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,
+                    num_beams=1,
+                    min_new_tokens=1,
+                    length_penalty=1,
+                    num_return_sequences=1,
+                    output_hidden_states=True,
+                    use_cache=True,)
         
         output = self.processor.batch_decode(output[:, model_input["input_ids"].size(1):],
                             skip_special_tokens=True)[0].strip()
         return output
-    
     
 class Qwen2Helper(ModelHelper):
     def __init__(self, model, processor, cur_dataset):
@@ -408,6 +432,23 @@ class Qwen2Helper(ModelHelper):
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
         return output_text[0]
+    
+    def vqascore(self, model_input, answer='Yes'):
+        with torch.inference_mode():
+            outputs = self.model.generate(
+                **model_input,
+                max_new_tokens=1,
+                do_sample=False, # Odd that greedy decoding seems necessary for some reason to get the logprobs
+                output_scores=True,
+                return_dict_in_generate=True
+            )
+        scores = outputs.scores[0]
+
+        probs = torch.nn.functional.softmax(scores, dim=-1)
+        yes_token_id = self.processor.tokenizer.encode(answer)[0]
+        lm_prob = probs[0, yes_token_id].item()
+        
+        return lm_prob
 
 
 
