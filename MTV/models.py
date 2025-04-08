@@ -377,8 +377,10 @@ class Qwen2Helper(ModelHelper):
             for head in range(28):
                 self.all_heads.append((layer, head, -1))
 
-    def insert_image(self, text, image_list):
+    def insert_image(self, text, image_list, gt=None):
 
+        if gt is not None:
+            text = text + gt
         messages = [
             {
                 "role": "user",
@@ -404,7 +406,8 @@ class Qwen2Helper(ModelHelper):
             return_tensors="pt",
         ).to("cuda")
 
-        
+        # print(f'input_height {inputs["image_grid_thw"][0][1]*14}')
+        # print(f'input_width {inputs["image_grid_thw"][0][2]*14}')
         return inputs
 
     def forward(self, model_input, labels=None):

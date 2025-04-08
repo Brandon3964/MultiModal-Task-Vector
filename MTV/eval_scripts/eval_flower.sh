@@ -1,11 +1,11 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=0
-python3 -m mtv_eval \
-    --model_name Qwen-VL \
+# export CUDA_VISIBLE_DEVICES=0
+python3 mtv_eval.py \
+    --model_name qwen2.5_vl \
     --data_name flower \
     --train_path ./data/flower/flower_train.json \
     --val_path ./data/flower/flower_test.json \
-    --num_example 100 \
+    --num_example 30 \
     --num_shot 4 \
     --max_token 20 \
     --eval_num_shot 0 \

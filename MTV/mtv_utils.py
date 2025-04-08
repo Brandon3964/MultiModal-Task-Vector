@@ -99,7 +99,7 @@ def load_model(model_name, cur_dataset):
 
         model_helper = Idefics2Helper(model, processor, cur_dataset)
 
-    if model_name == "qwen2.5-vl":
+    if model_name == "qwen2.5_vl":
         from transformers import Qwen2_5_VLForConditionalGeneration
 
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained( "Qwen/Qwen2.5-VL-7B-Instruct", torch_dtype=torch.bfloat16, device_map="auto", attn_implementation="flash_attention_2")
@@ -176,6 +176,7 @@ def get_last_mean_head_activations(dataset, model_helper, N_TRIALS = 50, shot=4,
     for n in tqdm(range(N_TRIALS)):
 
         text, image_list, _, _ = model_helper.format_func(dataset, None, num_shot=shot, model_helper=model_helper)
+
         inputs = model_helper.insert_image(text, image_list)
         activations_td, result= gather_last_attn_activations(inputs, model_helper)
 
@@ -215,7 +216,7 @@ def reinforce(mean_activations, model_helper, reinforce_data, eval_data):
     num_heads = model_helper.model_config["n_heads"]
     lr = 0.1
     eps = 1e-3
-    epoch = 1
+    epoch = 200 #100
 
     #(num_layer, num_head)
     bernoullis = [torch.neg(torch.ones(num_heads)).requires_grad_() for _ in range(num_layer)]
@@ -236,14 +237,13 @@ def reinforce(mean_activations, model_helper, reinforce_data, eval_data):
             if model_helper.space:
                 target_out = " " + target_out
 
-            print(target_out)
             target_token = model_helper.tokenizer(target_out, return_tensors='pt')["input_ids"][0][model_helper.nonspecial_idx].unsqueeze(dim=0).to("cuda")
             sigmoid_tensor = torch.stack([torch.sigmoid(bernoulli).clamp(min=eps, max=1-eps) for bernoulli in bernoullis])
             prob_dist = torch.distributions.Bernoulli(sigmoid_tensor)
 
 
             ###Sampling the distribution many times to reduce variance.
-            for _ in range(32):
+            for _ in range(32): # 32
 
                 ##Current sample
                 sampled = prob_dist.sample()
@@ -321,7 +321,7 @@ def avg_reinforce(mean_activations, model_helper, reinforce_data, eval_data):
     num_heads = model_helper.model_config["n_heads"]
     lr = 0.1
     eps = 1e-3
-    epoch = 600
+    epoch = 50
 
     #(num_layer, num_head)
     bernoullis = [torch.neg(torch.ones(num_heads)).requires_grad_() for _ in range(num_layer)]
@@ -377,8 +377,69 @@ def avg_reinforce(mean_activations, model_helper, reinforce_data, eval_data):
             torch.cuda.empty_cache()
             if epoch % 50 == 0:
                 print(policy_loss.item())
-                validate_reinforce(model_helper, bernoullis, eps, mean_activations, eval_data, epoch)
+                avg_validate_reinforce(model_helper, bernoullis, eps, mean_activations, eval_data, epoch)
     return bernoullis
+
+def avg_validate_reinforce(model_helper, bernoullis, eps, mean_activations, eval_data, epoch, sampled=None):
+    """
+    Validates the reinforcement learning process by computing average loss over all target tokens
+    instead of just the first token.
+    
+    Parameters:
+    model_helper: Helper for model operations
+    bernoullis: List of Bernoulli parameters for each layer's attention heads
+    eps: Small epsilon value for numerical stability
+    mean_activations: Mean activations from get_last_mean_head_activations
+    eval_data: Evaluation dataset
+    epoch: Current epoch number
+    sampled: Pre-sampled Bernoulli values (optional)
+    
+    Returns:
+    float: Average validation loss
+    """
+    
+    with torch.no_grad():
+        if sampled is None:
+            sigmoid_tensor = torch.stack([torch.sigmoid(bernoulli).clamp(min=eps, max=1-eps) for bernoulli in bernoullis])
+            prob_dist = torch.distributions.Bernoulli(sigmoid_tensor)
+            sampled = prob_dist.sample()
+
+        loss_list = []
+        for item in eval_data:
+            text, image_list, target_out, _ = model_helper.format_func(None, item, num_shot=0, split="test", model_helper=model_helper)
+            
+            if type(target_out) == list:
+                target_out = target_out[0]
+                
+            # Prepare the full input with ground truth for loss calculation
+            if model_helper.space:
+                target_out = " " + target_out
+                
+            # Create input with appended target for calculating loss on all target tokens
+            input_full = model_helper.insert_image(text, image_list, gt=target_out)
+            
+            # Create labels tensor with non-target positions masked as -100
+            labels = input_full[0].clone()
+            target_len = model_helper.tokenizer(target_out, return_tensors='pt')["input_ids"][0].shape[0]
+            labels[:, :-target_len] = -100
+            
+            # Compute loss for the entire target sequence
+            loss = reinforce_activation_replacement(
+                input_full, 
+                mean_activations, 
+                model_helper, 
+                sampled, 
+                last_token_only=True, 
+                gt=labels, 
+                intervention_token=-target_len-1
+            )
+            
+            loss_list.append(loss)
+
+        avg_loss = torch.tensor(loss_list).mean()
+        print(f"Average validation loss at {epoch} epoch: {avg_loss.item():.4f}")
+        
+    return avg_loss.item()
 
 
 def reinforce_activation_replacement(model_input, avg_activations, model_helper, sampled, last_token_only=True, gt=None, intervention_token=None):

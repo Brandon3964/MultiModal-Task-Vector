@@ -1,9 +1,9 @@
-python3 ../mtv_eval.py \
-    --model_name qwen2.5-vl \
+python3 ../mtv_eval_reward.py \
+    --model_name qwen2.5_vl \
     --data_name natural_ret \
     --train_path ../data/naturalbench_ret_train.jsonl \
-    --val_path ../data/naturalbench_ret_test.jsonl \
-    --num_example 1 \
+    --val_path ../data/naturalbench_ret_test_mini.jsonl \
+    --num_example 30 \
     --num_shot 1 \
     --max_token 20 \
     --eval_num_shot 0 \

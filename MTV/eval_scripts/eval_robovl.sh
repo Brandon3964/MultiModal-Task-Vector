@@ -1,0 +1,15 @@
+python3 ../mtv_eval_od.py \
+    --model_name qwen2.5-vl \
+    --data_name robovl \
+    --train_path /home/chancharikm/FSOD_data/wheat_heads/train/train.jsonl \
+    --val_path /home/chancharikm/FSOD_data/wheat_heads/train/train.jsonl \
+    --num_example 1 \
+    --num_shot 1 \
+    --max_token 256 \
+    --eval_num_shot 0 \
+    --bernoullis_path ../storage/wheat_heads_mtv.pt \
+    --activation_path ../storage/wheat_heads_mtv_activation.pt \
+    --is_eval True \
+    --result_folder ./ \
+    --cur_mode both \
+    --experiment_name temp

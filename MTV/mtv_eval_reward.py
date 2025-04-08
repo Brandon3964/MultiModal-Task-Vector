@@ -25,34 +25,36 @@ def eval_reinforce(args):
     ##Mean activation of some in-context input
     if args.cur_mode != "clean":
 
-        mean_activations = get_last_mean_head_activations(activation_data, model_helper, N_TRIALS = args.num_example, shot=args.num_shot)
+        # mean_activations = get_last_mean_head_activations(activation_data, model_helper, N_TRIALS = args.num_example, shot=args.num_shot)
 
-        torch.save(mean_activations, args.activation_path)
+        # torch.save(mean_activations, args.activation_path)
         mean_activations = torch.load(args.activation_path)
 
         # ##Examples from the test set is used to visualize the validation loss
-        bernoullis = reinforce(mean_activations, model_helper, reinforce_data, eval_data)
+        # bernoullis = reinforce(mean_activations, model_helper, reinforce_data, eval_data)
+        # bernoullis = torch.stack(bernoullis, dim=0)
+        # print(bernoullis.shape)
         # torch.save(bernoullis, args.bernoullis_path)
-        # bernoullis = torch.load(args.bernoullis_path)
-
+        bernoullis = torch.load(args.bernoullis_path)
+ 
         best_heads = (999, None)
         ###Sample multiple times and pick the best set of heads.
-        for _ in range(10):
-            ###Sample from the trained distribution and identify the intervention locations
-            sigmoid_tensor = torch.stack([torch.sigmoid(bernoulli).clamp(min=0, max=1) for bernoulli in bernoullis])
-            ###Thresholding heads with low probability from being sampled. Reduce the number of heads. Idefics2 empirically benefit from less heads.
-            if args.model_name == "idefics2":
-                sigmoid_tensor = torch.nn.functional.threshold(sigmoid_tensor, 0.8, 0)
+        # for _ in range(10):
+        #     ###Sample from the trained distribution and identify the intervention locations
+        #     sigmoid_tensor = torch.stack([torch.sigmoid(bernoulli).clamp(min=0, max=1) for bernoulli in bernoullis])
+        #     ###Thresholding heads with low probability from being sampled. Reduce the number of heads. Idefics2 empirically benefit from less heads.
+        #     if args.model_name == "idefics2":
+        #         sigmoid_tensor = torch.nn.functional.threshold(sigmoid_tensor, 0.8, 0)
 
             
-            prob_dist = torch.distributions.Bernoulli(sigmoid_tensor)
-            sampled = prob_dist.sample()
-            intervention_locations = reinforce_intervention_location(sampled)
-            cur_heads_loss = validate_reinforce(model_helper, bernoullis, 1e-3, mean_activations, train_dataset[:50], 0, sampled=sampled)
-            if cur_heads_loss < best_heads[0]:
-                best_heads = (cur_heads_loss, intervention_locations)
-        torch.save(best_heads[1], args.bernoullis_path)
-        intervention_locations = best_heads[1]
+        #     prob_dist = torch.distributions.Bernoulli(sigmoid_tensor)
+        #     sampled = prob_dist.sample()
+        #     intervention_locations = reinforce_intervention_location(sampled)
+        #     cur_heads_loss = validate_reinforce(model_helper, bernoullis, 1e-3, mean_activations, train_dataset[:50], 0, sampled=sampled)
+        #     if cur_heads_loss < best_heads[0]:
+        #         best_heads = (cur_heads_loss, intervention_locations)
+        # torch.save(best_heads[1], args.bernoullis_path)
+        # intervention_locations = best_heads[1]
 
         intervention_locations = torch.load(args.bernoullis_path)
     else:
@@ -69,8 +71,8 @@ def eval_reinforce(args):
     for item in tqdm(val_dataset):
         text, image_list, target_out, question_id = model_helper.format_func(train_dataset, item, num_shot=args.eval_num_shot)
         new_input = model_helper.insert_image(text, image_list)
-        clean_out, interv_out = fv_intervention_natural_text(new_input, model_helper, max_new_tokens=args.max_token, return_item=args.cur_mode, intervention_locations=intervention_locations, avg_activations=mean_activations)
-        
+        clean_out, interv_out = fv_intervention_vqascore(new_input, model_helper, return_item=args.cur_mode, intervention_locations=intervention_locations, avg_activations=mean_activations)
+        print(f'New Input {text} \n\n Clean Out {clean_out} \n interv_out {interv_out} \n\n target_out {target_out}')
         # Add to score lists
         interv_answers.append({"score": interv_out, "question_id": question_id}) # Can change this to have an index for query and context
         clean_answers.append({"score": clean_out, "question_id": question_id})
@@ -114,63 +116,64 @@ def eval_reinforce(args):
         for line in interv_answers:
             writefile.write(json.dumps(line) + '\n')
 
-    def evaluate_naturalbench(test_data):
-        """
-        Evaluate NaturalBench dataset using the group-based metrics.
-        """
-        q_correct = 0  # Question accuracy count
-        i_correct = 0  # Image accuracy count  
-        g_correct = 0  # Group accuracy count
-        correct = 0  # Raw accuracy count
-        total_groups = len(test_data) // 4  # Total number of groups
+def evaluate_naturalbench(test_data):
+    """
+    Evaluate NaturalBench dataset using the group-based metrics.
+    """
+    q_correct = 0  # Question accuracy count
+    i_correct = 0  # Image accuracy count  
+    g_correct = 0  # Group accuracy count
+    correct = 0  # Raw accuracy count
+    total_groups = len(test_data) // 4  # Total number of groups
+    
+    # Process data in groups of 4
+    for i in range(0, len(test_data), 4):
+        group = test_data[i:i+4]
+        group_preds = []
         
-        # Process data in groups of 4
-        for i in range(0, len(test_data), 4):
-            group = test_data[i:i+4]
-            group_preds = []
+        # Get predictions for the group
+        for item in group:
+            pred = item["pred"]
+            label = item["label"]
+            group_preds.append(pred.lower() == label.lower())
+        
+        # Question accuracy (first two and second two must match)
+        if group_preds[0] and group_preds[1]:
+            q_correct += 1
+        if group_preds[2] and group_preds[3]:
+            q_correct += 1
             
-            # Get predictions for the group
-            for item in group:
-                pred = item["pred"]
-                label = item["label"]
-                group_preds.append(pred.lower() == label.lower())
+        # Image accuracy (first and third, second and fourth must match)
+        if group_preds[0] and group_preds[2]:
+            i_correct += 1
+        if group_preds[1] and group_preds[3]:
+            i_correct += 1
             
-            # Question accuracy (first two and second two must match)
-            if group_preds[0] and group_preds[1]:
-                q_correct += 1
-            if group_preds[2] and group_preds[3]:
-                q_correct += 1
-                
-            # Image accuracy (first and third, second and fourth must match)
-            if group_preds[0] and group_preds[2]:
-                i_correct += 1
-            if group_preds[1] and group_preds[3]:
-                i_correct += 1
-                
-            # Group accuracy (all four must be correct)
-            if all(group_preds):
-                g_correct += 1
+        # Group accuracy (all four must be correct)
+        if all(group_preds):
+            g_correct += 1
 
-            # Raw accuracy
-            correct += sum(group_preds)
+        # Raw accuracy
+        correct += sum(group_preds)
 
-        # Calculate percentages
-        q_acc = q_correct / (total_groups * 2)  # Two questions per group
-        i_acc = i_correct / (total_groups * 2)  # Two images per group
-        g_acc = g_correct / total_groups        # One group accuracy score per group
-        acc = correct / (total_groups * 4)      # Accuracy calculated per sample
-        
-        print(f"Question accuracy: {q_acc:.4f}")
-        print(f"Image accuracy: {i_acc:.4f}")
-        print(f"Group accuracy: {g_acc:.4f}")
-        print(f"Raw accuracy: {acc:.4f}")
-        
-        return {
-            "question_accuracy": q_acc,
-            "image_accuracy": i_acc,
-            "group_accuracy": g_acc,
-            "raw_accuracy": acc
-        }
+    # Calculate percentages
+    q_acc = q_correct / (total_groups * 2)  # Two questions per group
+    i_acc = i_correct / (total_groups * 2)  # Two images per group
+    g_acc = g_correct / total_groups        # One group accuracy score per group
+    acc = correct / (total_groups * 4)      # Accuracy calculated per sample
+    
+    print(f"Question accuracy: {q_acc:.4f}")
+    print(f"Image accuracy: {i_acc:.4f}")
+    print(f"Group accuracy: {g_acc:.4f}")
+    print(f"Raw accuracy: {acc:.4f}")
+    
+    return {
+        "question_accuracy": q_acc,
+        "image_accuracy": i_acc,
+        "group_accuracy": g_acc,
+        "raw_accuracy": acc
+    }
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="Qwen")
